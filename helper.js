@@ -1,4 +1,4 @@
-export function formatWhatsAppId(phoneNumber) {
+module.exports = function formatWhatsAppId(phoneNumber) {
     if (!phoneNumber || typeof phoneNumber !== 'string') return null;
 
     const digitsOnly = phoneNumber.replace(/\D/g, '');

@@ -1,22 +1,21 @@
-import express from 'express';
-import bodyParser from 'body-parser';
-import pkg from 'whatsapp-web.js';
-const { Client, LocalAuth, MessageMedia } = pkg;
-import qrcode from 'qrcode-terminal';
+const express = require('express');
+const bodyParser = require('body-parser');
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
+const formatWhatsAppId = require('./helper.js')
 
-import { formatWhatsAppId } from './helper.js'; 
 
+// --- Express App Setup ---
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Middleware to parse JSON bodies
 app.use(bodyParser.json());
-
-// Serve static files from the 'public' directory
 app.use(express.static('public'));
 
 // --- WhatsApp Client Setup ---
 const client = new Client({
-    authStrategy: new LocalAuth(),
+    authStrategy: new LocalAuth(), // Uses a local session to keep you logged in
     puppeteer: {
         headless: 'new',
         args: ['--no-sandbox'] // Recommended for running on servers
@@ -58,15 +57,15 @@ client.initialize();
  * 
  * FOR A SINGLE MESSAGE:
  * {
- *   "recipient": "919876543210",
+ *   "recipient": "919876543210@c.us",
  *   "message": "Hello, this is a single message!"
  * }
  * 
  * FOR BULK MESSAGES:
  * {
  *   "recipients": [
- *     "919876543210",
- *     "15551234567"
+ *     "919876543210@c.us",
+ *     "15551234567@c.us"
  *   ],
  *   "message": "Hello, this is a bulk message!"
  * }
@@ -140,7 +139,10 @@ app.post('/send-message', async (req, res) => {
             const batch = validRecipients.slice(i, i + batchSize);
             await Promise.all(batch.map(async (recipientId) => {
                 try {
-                    await client.sendMessage(recipientId, contentToSend, { caption: media?.caption || '' });
+                    await client.sendMessage(recipientId, contentToSend, { 
+                        linkPreview: true,
+                        caption: media?.caption || '' 
+                    });
                     sentCount++;
                     console.log(`Sent to ${recipientId}`);
                 } catch (err) {
@@ -162,7 +164,6 @@ app.post('/send-message', async (req, res) => {
         return res.status(400).json({ success: false, error: 'Invalid payload. Provide "recipient" or "recipients".' });
     }
 });
-
 
 // GET /status
 // A simple endpoint to check if the WhatsApp client is ready
