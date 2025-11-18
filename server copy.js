@@ -74,95 +74,109 @@ client.initialize();
 
 // POST /send-message
 app.post('/send-message', async (req, res) => {
-    const { recipient, recipients, message, media } = req.body;
-
+    const { recipient, recipients, message } = req.body;
+    
     if (!client.info) {
         return res.status(503).json({ success: false, error: 'WhatsApp client is not ready. Please scan the QR code.' });
     }
 
-    // Function to create MessageMedia if media is provided
-    const createMedia = (mediaObj) => {
-        if (!mediaObj || !mediaObj.data || !mediaObj.mimetype) return null;
-        return new MessageMedia(mediaObj.mimetype, mediaObj.data, mediaObj.filename);
-    };
-
-    // --- Single Recipient ---
+    // --- Single Message Logic ---
     if (recipient && typeof recipient === 'string') {
         const formattedRecipient = formatWhatsAppId(recipient);
+
         if (!formattedRecipient) {
-            return res.status(400).json({ success: false, error: 'Invalid recipient number.' });
+            return res.status(400).json({ 
+                success: false, 
+                error: `Invalid recipient number: "${recipient}". It must be 12 digits after removing non-numeric characters.` 
+            });
         }
 
-        let contentToSend = createMedia(media) || message;
-        if (!contentToSend) {
-            return res.status(400).json({ success: false, error: 'Message or media is required.' });
+        let contentToSend;
+
+        // --- Check if media is provided ---
+        if (media) {
+            // Validate required media fields
+            if (!media.mimetype || !media.data) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'Media object must contain "mimetype" and "data" fields.' 
+                });
+            }
+            // Create a MessageMedia object from the payload
+            contentToSend = new MessageMedia(media.mimetype, media.data, media.filename, media.caption);
+        } 
+        // --- If no media, use the text message ---
+        else {
+            if (!message || typeof message !== 'string') {
+                 return res.status(400).json({ success: false, error: 'Message content is required for non-media messages.' });
+            }
+            contentToSend = message;
         }
 
         try {
-            await client.sendMessage(formattedRecipient, contentToSend, { caption: media?.caption || '' });
+            await client.sendMessage(formattedRecipient, contentToSend);
+            console.log(`Single message sent to ${formattedRecipient}`);
             return res.status(200).json({ success: true, message: `Message sent to ${formattedRecipient}` });
-        } catch (err) {
-            console.error(err);
-            return res.status(500).json({ success: false, error: 'Failed to send message.' });
+        } catch (error) {
+            console.error(`Failed to send single message to ${formattedRecipient}:`, error);
+            return res.status(500).json({ success: false, error: `Failed to send message to ${formattedRecipient}.` });
         }
-    }
+    } 
+    // --- Bulk Message Logic ---
+    else if (recipients && Array.isArray(recipients)) {
+        if (recipients.length === 0) {
+            return res.status(400).json({ success: false, error: 'Recipients array cannot be empty.' });
+        }
 
-    // --- Bulk Recipients ---
-    else if (recipients && Array.isArray(recipients) && recipients.length > 0) {
-        // Validate and format all recipients
+        // --- Validate and format all recipients first ---
         const validRecipients = [];
         const invalidNumbers = [];
 
         for (const number of recipients) {
             const formattedId = formatWhatsAppId(number);
-            if (formattedId) validRecipients.push(formattedId);
-            else invalidNumbers.push(number);
+            if (formattedId) {
+                validRecipients.push(formattedId);
+            } else {
+                invalidNumbers.push(number);
+            }
         }
 
         if (invalidNumbers.length > 0) {
             return res.status(400).json({ 
                 success: false, 
-                error: 'Some numbers are invalid.', 
-                invalidNumbers 
+                error: 'The following numbers are invalid (must be 12 digits):', 
+                invalidNumbers: invalidNumbers 
             });
         }
-
-        const contentToSend = createMedia(media) || message;
-        if (!contentToSend) {
-            return res.status(400).json({ success: false, error: 'Message or media is required.' });
-        }
-
-        // Use a **throttled loop** to send messages in batches
-        const batchSize = 20; // adjust depending on server load
-        let sentCount = 0;
-
-        for (let i = 0; i < validRecipients.length; i += batchSize) {
-            const batch = validRecipients.slice(i, i + batchSize);
-            await Promise.all(batch.map(async (recipientId) => {
+        
+        console.log(`Starting bulk send to ${validRecipients.length} valid recipients.`);
+        
+        // Process messages asynchronously
+        setImmediate(async () => {
+            for (const recipientId of validRecipients) {
                 try {
-                    await client.sendMessage(recipientId, contentToSend, { caption: media?.caption || '' });
-                    sentCount++;
-                    console.log(`Sent to ${recipientId}`);
-                } catch (err) {
-                    console.error(`Failed to send to ${recipientId}:`, err.message);
+                    await client.sendMessage(recipientId, message);
+                    console.log(`Bulk message sent successfully to ${recipientId}`);
+                } catch (error) {
+                    console.error(`Failed to send bulk message to ${recipientId}:`, error);
                 }
-            }));
-
-            // Optional delay between batches to avoid WhatsApp throttling
-            await new Promise(r => setTimeout(r, 2000)); 
-        }
+            }
+            console.log('Bulk sending process completed.');
+        });
 
         return res.status(202).json({ 
             success: true, 
-            message: `Bulk message sending started. Successfully sent to ${sentCount} recipients.` 
+            message: `Bulk message dispatch started for ${validRecipients.length} recipients.` 
+        });
+    } 
+    // --- Invalid Payload ---
+    else {
+        return res.status(400).json({ 
+            success: false, 
+            error: 'Invalid payload. Please provide either a "recipient" (string) or "recipients" (array).' 
         });
     }
-
-    else {
-        return res.status(400).json({ success: false, error: 'Invalid payload. Provide "recipient" or "recipients".' });
-    }
 });
-
 
 // GET /status
 // A simple endpoint to check if the WhatsApp client is ready
